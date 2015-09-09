@@ -1,11 +1,9 @@
 
 /* Warren Fox, Sep 2015 */
 
-/* the valid door commands sent via http PUT */
-const String OpenCommand = "OPEN";
-const String CloseCommand = "CLOSE";
-const String CheckSingleCommand = "CHECKSINGLE";
-const String CheckDoubleCommand = "CHECKDOUBLE";
+/* the valid doors to be commanded */
+const String SingleDoor = "SINGLE";
+const String DoubleDoor = "DOUBLE";
 
 /* door state string values to export to the server.
  * An http GET directed to the server (e.g. from an app)
@@ -14,8 +12,6 @@ const String CheckDoubleCommand = "CHECKDOUBLE";
 const char* ClosedState = "Down";
 const char* OpenedState = "Up";
 
-/* offset for the CHECKxxx command response, see doorCommand() */
-const int StateOffset = 10;
 const int StateStringMaxLen = 50;
 
 /* door states */
@@ -50,21 +46,24 @@ Door doubleDoor = {D4, D5, D6, StateUnknown, ""};
 const int OnBoardLedPin = D7;           // on board LED
 
 /**
- * setup(), loop(), and doorCommand() are called by the Particle framework.
+ * setup(), loop(), openCommand(), closeCommand() and checkCommand()
+ * are called by the Particle framework.
  * The signatures for these functions are defined by the framework.
  * Global variables are required in order to share data between these functions.
  *
- * doorCommand() is called in response to an http PUT to the server referencing
- * this function by name.  This is the entry point to this app to command a door
- * change or query door state.
+ * openCommand(), closeCommand() and checkCommand() are called in response to
+ * an http PUT to the server referencing the function by it's registered name.
+ * These are the entry points to this app.
  *
  * The other functions in this file are called by setup(), loop() and
- * doorCommand().
+ * openCommand(), closeCommand() and checkCommand().
  */
 
 void setup() {
   // register server functions and variables
-  Spark.function("action", doorCommand);
+  Spark.function("open", openCommand);
+  Spark.function("close", closeCommand);
+  Spark.function("check", checkCommand);
   // these variables (2nd argument) are polled by the server every 30 seconds
   Spark.variable("singleDoor", singleDoor.stateString, STRING);
   Spark.variable("doubleDoor", doubleDoor.stateString, STRING);
@@ -84,38 +83,83 @@ void loop(void) {
   setLed(updateDoorState(&singleDoor)); // use LED for state of single door
 }
 
-// Parse the command string from the server, act upon the command.
-// Currently only the single door may be opened or closed.
+// Open the specified door if it is currently closed.
 // This function returns a single int to the server, which is then
 // provided to the original requestor as a nominal status code.
-// The return code is overloaded:
+// The return code is:
 //    -1 on bad input
 //    0 on no action
-//    1 on door toggle initiated (OPEN or CLOSE command)
-//    StateOffset + DoorState on status request (CHECKSINGLE or CHECKDOUBLE)
-//      (currently, 10 = DoorUp, 11 = DoorDown)
-int doorCommand(String command)
+//    1 on door open initiated
+int openCommand(String command)
 {
   int result = 0;
 
-  if(command.startsWith(OpenCommand)) {
-    // if commanded to open the closed (single) door
+  if(command.startsWith(SingleDoor)) {
+    // if commanded to open the closed single door
     if (singleDoor.state == DoorDown) {
       result = engageDoor(&singleDoor);
     }
-  } else if (command.startsWith(CloseCommand)) {
-    // if commanded to close the open (single) door
+  } else if (command.startsWith(DoubleDoor)) {
+    // if commanded to open the closed double door
+    if (doubleDoor.state == DoorDown) {
+      result = engageDoor(&doubleDoor);
+    }
+  } else {
+    // door not recognized
+    result = -1;
+  }
+
+  return result;
+}
+
+// Close the specified door if it is currently open.
+// This function returns a single int to the server, which is then
+// provided to the original requestor as a nominal status code.
+// The return code is:
+//    -1 on bad input
+//    0 on no action
+//    1 on door close initiated
+int closeCommand(String command)
+{
+  int result = 0;
+
+  if(command.startsWith(SingleDoor)) {
+    // if commanded to close the open single door
     if (singleDoor.state == DoorUp) {
       result = engageDoor(&singleDoor);
     }
-  } else if (command.startsWith(CheckSingleCommand)) {
-    // respond with single door state
-    result = (int)StateOffset + (int)singleDoor.state;
-  } else if (command.startsWith(CheckDoubleCommand)) {
-    // respond with double door state
-    result = (int)StateOffset + (int)doubleDoor.state;
+  } else if (command.startsWith(DoubleDoor)) {
+    // if commanded to close the open double door
+    if (doubleDoor.state == DoorUp) {
+      result = engageDoor(&doubleDoor);
+    }
   } else {
-    // command not recognized
+    // door not recognized
+    result = -1;
+  }
+
+  return result;
+}
+
+// Check the specified door, return it's status.
+// This function returns a single int to the server, which is then
+// provided to the original requestor as a nominal status code.
+// The return code is:
+//    -1 on bad input
+//    0 on door up
+//    1 on door down
+int checkCommand(String command)
+{
+  int result = 0;
+
+  if (command.startsWith(SingleDoor)) {
+    // respond with single door state
+    result = (int)singleDoor.state;
+  } else if (command.startsWith(DoubleDoor)) {
+    // respond with double door state
+    result = (int)doubleDoor.state;
+  } else {
+    // door not recognized
     result = -1;
   }
 
