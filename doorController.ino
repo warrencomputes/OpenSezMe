@@ -5,14 +5,17 @@
 const String SingleDoor = "SINGLE";
 const String DoubleDoor = "DOUBLE";
 
+/* the source of the door movement command, published as a String to the server */
+const String WallSwitch = "WallSwitch";
+const String ParticleCommand = "ParticleCommand";
+String commandSource = WallSwitch;
+
 /* door state string values to export to the server.
  * An http GET directed to the server (e.g. from an app)
  * can directly display these strings to the user.
  */
 const char* ClosedState = "Down";
 const char* OpenedState = "Up";
-
-const int StateStringMaxLen = 50;
 
 /* door states */
 typedef enum {
@@ -21,7 +24,12 @@ typedef enum {
   StateUnknown
 } DoorState;
 
+/* keep track of state changes, report changes to the server */
+DoorState lastSingleDoorState = StateUnknown;
+DoorState lastDoubleDoorState = StateUnknown;
+
 /* door state and control/monitor access for the door */
+const int StateStringMaxLen = 50;
 typedef struct {
   int controlPin;   // raise high briefly to signal the door controller
   int senseOutPin;  // briefly bring high ...
@@ -35,7 +43,6 @@ typedef struct {
 void setDoorPins(Door *door);
 int engageDoor(Door *door);
 DoorState readDoorState(Door *door);
-void setLed(DoorState doorState);
 DoorState updateDoorState(Door *door);
 
 
@@ -43,7 +50,6 @@ DoorState updateDoorState(Door *door);
 // D0, D1 etc refer to the pins on the Particle Core.
 Door singleDoor = {D0, D1, D2, StateUnknown, ""};
 Door doubleDoor = {D4, D5, D6, StateUnknown, ""};
-const int OnBoardLedPin = D7;           // on board LED
 
 /**
  * setup(), loop(), openCommand(), closeCommand() and checkCommand()
@@ -71,16 +77,30 @@ void setup() {
   // set the pins that control/monitor the doors
   setDoorPins(&singleDoor);
   setDoorPins(&doubleDoor);
-
-  // configure the on board LED
-  pinMode(OnBoardLedPin, OUTPUT);
 }
 
 // continually monitor both doors for state changes
 void loop(void) {
   delay(1000);
-  updateDoorState(&doubleDoor);
-  setLed(updateDoorState(&singleDoor)); // use LED for state of single door
+
+  // check for state changes
+  DoorState currentState;
+  if ((currentState = updateDoorState(&doubleDoor)) != lastDoubleDoorState) {
+    // publish and record locally
+    char event[StateStringMaxLen] = "double door ";
+    strcat(event, currentState==DoorDown ? ClosedState : OpenedState);
+    Spark.publish(event, commandSource);
+    lastDoubleDoorState = currentState;
+    commandSource = WallSwitch;   // the default
+  }
+  if ((currentState = updateDoorState(&singleDoor)) != lastSingleDoorState) {
+    // publish and record locally
+    char event[StateStringMaxLen] = "single door ";
+    strcat(event, currentState==DoorDown ? ClosedState : OpenedState);
+    Spark.publish(event, commandSource);
+    lastSingleDoorState = currentState;
+    commandSource = WallSwitch;   // the default
+  }
 }
 
 // Open the specified door if it is currently closed.
@@ -90,19 +110,20 @@ void loop(void) {
 //    -1 on bad input
 //    0 on no action
 //    1 on door open initiated
-int openCommand(String command)
-{
+int openCommand(String command) {
   int result = 0;
 
   if(command.startsWith(SingleDoor)) {
     // if commanded to open the closed single door
     if (singleDoor.state == DoorDown) {
       result = engageDoor(&singleDoor);
+      commandSource = ParticleCommand;
     }
   } else if (command.startsWith(DoubleDoor)) {
     // if commanded to open the closed double door
     if (doubleDoor.state == DoorDown) {
       result = engageDoor(&doubleDoor);
+      commandSource = ParticleCommand;
     }
   } else {
     // door not recognized
@@ -119,19 +140,20 @@ int openCommand(String command)
 //    -1 on bad input
 //    0 on no action
 //    1 on door close initiated
-int closeCommand(String command)
-{
+int closeCommand(String command) {
   int result = 0;
 
   if(command.startsWith(SingleDoor)) {
     // if commanded to close the open single door
     if (singleDoor.state == DoorUp) {
       result = engageDoor(&singleDoor);
+      commandSource = ParticleCommand;
     }
   } else if (command.startsWith(DoubleDoor)) {
     // if commanded to close the open double door
     if (doubleDoor.state == DoorUp) {
       result = engageDoor(&doubleDoor);
+      commandSource = ParticleCommand;
     }
   } else {
     // door not recognized
@@ -148,8 +170,7 @@ int closeCommand(String command)
 //    -1 on bad input
 //    0 on door up
 //    1 on door down
-int checkCommand(String command)
-{
+int checkCommand(String command) {
   int result = 0;
 
   if (command.startsWith(SingleDoor)) {
@@ -192,15 +213,6 @@ DoorState readDoorState(Door *door) {
     return DoorDown;
   }
   return DoorUp;
-}
-
-// turn on LED on DoorUp, turn off otherwise.
-void setLed(DoorState doorState) {
-  if (doorState == DoorUp) {
-    digitalWrite(OnBoardLedPin, HIGH);
-  } else {
-    digitalWrite(OnBoardLedPin, LOW);
-  }
 }
 
 // Update the door state variables based on the door sensor reading.
