@@ -39,6 +39,13 @@ typedef struct {
   char stateString[StateStringMaxLen];  // door state in string form
 } Door;
 
+// length of time to close the relay circuit for the door motor controller
+const int RELAY_DELAY = 300;  // milliseconds
+// length of time to delay on a 'vent' command such that a subsequent
+// 'close' doesn't bounce the door off the floor and lead to full open
+const int VENT_DELAY_SINGLE = 1000;   // milliseconds
+const int VENT_DELAY_DOUBLE = 700;    // milliseconds
+
 // prototypes for local functions
 void setDoorPins(Door *door);
 int engageDoor(Door *door);
@@ -52,13 +59,13 @@ Door singleDoor = {D0, D1, D2, StateUnknown, ""};
 Door doubleDoor = {D4, D5, D6, StateUnknown, ""};
 
 /**
- * setup(), loop(), openCommand(), closeCommand() and checkCommand()
- * are called by the Particle framework.
+ * setup(), loop(), openCommand(), closeCommand(), checkCommand() and
+ * ventCommand() are called by the Particle framework.
  * The signatures for these functions are defined by the framework.
  * Global variables are required in order to share data between these functions.
  *
- * openCommand(), closeCommand() and checkCommand() are called in response to
- * an http PUT to the server referencing the function by it's registered name.
+ * The various xxxCommand()'s are called in response to an http POST
+ * to the server referencing the function by it's registered name.
  * These are the entry points to this app.
  *
  * The other functions in this file are called by setup(), loop() and
@@ -70,6 +77,7 @@ void setup() {
   Spark.function("open", openCommand);
   Spark.function("close", closeCommand);
   Spark.function("check", checkCommand);
+  Spark.function("vent", ventCommand);
   // these variables (2nd argument) are polled by the server every 30 seconds
   Spark.variable("singleDoor", singleDoor.stateString, STRING);
   Spark.variable("doubleDoor", doubleDoor.stateString, STRING);
@@ -187,6 +195,43 @@ int checkCommand(String command) {
   return result;
 }
 
+// Vent the specified door, return it's status.
+// Vent means to move a closed door up a few inches.
+// This function returns a single int to the server, which is then
+// provided to the original requestor as a nominal status code.
+// The return code is:
+//    -1 on bad input
+//    0 on door already opened or vented
+//    1 on door vented
+int ventCommand(String command) {
+  int result = 0;
+
+  if(command.startsWith(SingleDoor)) {
+    // if commanded to vent the closed single door
+    if (singleDoor.state == DoorDown) {
+      engageDoor(&singleDoor);
+      // allow short delay for upward movement, then stop the door
+      delay(VENT_DELAY_SINGLE);
+      result = engageDoor(&singleDoor);
+      commandSource = ParticleCommand;
+    }
+  } else if (command.startsWith(DoubleDoor)) {
+    // if commanded to vent the closed double door
+    if (doubleDoor.state == DoorDown) {
+      engageDoor(&doubleDoor);
+      // allow short delay for upward movement, then stop the door
+      delay(VENT_DELAY_DOUBLE);
+      result = engageDoor(&doubleDoor);
+      commandSource = ParticleCommand;
+    }
+  } else {
+    // door not recognized
+    result = -1;
+  }
+
+  return result;
+}
+
 // Set the pins for sensing and opening/closing the door.
 void setDoorPins(Door *door) {
   pinMode(door->controlPin, OUTPUT);
@@ -199,7 +244,7 @@ void setDoorPins(Door *door) {
 // Engage the garage door controller to change the door state.
 int engageDoor(Door *door) {
   digitalWrite(door->controlPin, HIGH);
-  delay(300);
+  delay(RELAY_DELAY);
   digitalWrite(door->controlPin, LOW);
   return 1;
 }
